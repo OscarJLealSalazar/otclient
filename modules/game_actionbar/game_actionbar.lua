@@ -240,12 +240,21 @@ function keepBarOnScreen(bar)
     })
 end
 
+-- Stacks the extra bars upwards from just above the bottom panel, so they never
+-- open on top of the console or of the fixed bar.
 local function defaultBarPosition(bar, index)
     local parent = bar:getParent()
     local area = parent:getRect()
+
+    local reserved = 0
+    if bottomPanel then
+        reserved = bottomPanel:getHeight()
+    end
+
+    local step = bar:getHeight() + 4
     return {
         x = area.x + math.max(0, math.floor((area.width - bar:getWidth()) / 2)),
-        y = area.y + math.max(0, area.height - 60 - (index - 1) * (bar:getHeight() + 4))
+        y = area.y + math.max(0, area.height - reserved - 10 - (index - 1) * step)
     }
 end
 
