@@ -110,9 +110,12 @@ function init()
         onGameEnd = offline
     })
 
-    healthInfoButton = modules.client_topmenu.addRightGameToggleButton('healthInfoButton', tr('Health Information'),
+    healthInfoButton = modules.client_topmenu.addRightGameToggleButton('healthInfoButton',
+                                                                       tr('Health Information') .. ' (Alt+V)',
                                                                        '/images/topbuttons/healthinfo', toggle)
     healthInfoButton:setOn(true)
+
+    g_keyboard.bindKeyDown('Alt+V', toggle)
 
     healthInfoWindow = g_ui.loadUI('healthinfo')
     healthInfoWindow:disableResize()
@@ -160,6 +163,7 @@ function terminate()
 
     healthInfoWindow:destroy()
     healthInfoButton:destroy()
+    g_keyboard.unbindKeyDown('Alt+V')
 
     healthInfoWindow = nil
     healthBar = nil

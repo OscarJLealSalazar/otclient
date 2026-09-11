@@ -4,8 +4,19 @@ HOTKEY_USEONTARGET = 2
 HOTKEY_USEWITH = 3
 
 local maxSlots = 60
+-- one fixed bar plus a few extra ones the player can show and hide at will
+local ACTION_BAR_COUNT = 5
+local EXTRA_BAR_WIDTH = 480
+local SWAP_SLOT_ID = 'slotSwapTemp'
+
+actionBars = {}
 actionBar = nil
 actionBarPanel = nil
+extraBarsVisible = false
+local applyingExtraBars = false
+-- while a whole bar set is being restored the per-slot helpers must not rebind
+-- every hotkey again, that would be quadratic on the number of slots
+local bulkLoading = false
 bottomPanel = nil
 slotToEdit = nil
 spellAssignWindow = nil
@@ -31,6 +42,17 @@ function init()
     bottomPanel = modules.game_interface.getBottomPanel()
     actionBar = g_ui.loadUI('game_actionbar', bottomPanel)
     actionBarPanel = actionBar:getChildById('actionBarPanel')
+
+    actionBars = { {
+        window = actionBar,
+        panel = actionBarPanel,
+        index = 1,
+        fixed = true
+    } }
+    createExtraBars()
+
+    g_keyboard.bindKeyDown('Alt+B', toggleExtraBars)
+
     mouseGrabberWidget = g_ui.createWidget('UIWidget')
     mouseGrabberWidget:setVisible(false)
     mouseGrabberWidget:setFocusable(false)
@@ -58,7 +80,18 @@ function init()
 end
 
 function terminate()
-    actionBar:destroy()
+    g_keyboard.unbindKeyDown('Alt+B')
+
+    for i = #actionBars, 1, -1 do
+        local bar = actionBars[i].window
+        if bar and not bar:isDestroyed() then
+            bar:destroy()
+        end
+    end
+    actionBars = {}
+    actionBar = nil
+    actionBarPanel = nil
+
     mouseGrabberWidget:destroy()
     disconnect(g_game, {
         onGameStart = online,
@@ -97,7 +130,9 @@ function terminate()
 end
 
 function online()
-    actionBarPanel:destroyChildren()
+    for _, bar in ipairs(actionBars) do
+        bar.panel:destroyChildren()
+    end
     addEvent(function()
         setupActionBar()
         loadActionBar()
@@ -109,12 +144,219 @@ function offline()
     unbindHotkeys()
 end
 
+-- ---------------------------------------------------------------------------
+-- bars
+-- ---------------------------------------------------------------------------
+
+-- Slot ids stay unique across every bar: the first bar owns slot1..slot60, the
+-- second one slot61..slot120 and so on, so old settings keep loading into the
+-- fixed bar untouched.
+local function slotIdAt(barIndex, slotIndex)
+    return 'slot' .. ((barIndex - 1) * maxSlots + slotIndex)
+end
+
+function getBars()
+    return actionBars
+end
+
+function getFixedBar()
+    return actionBar
+end
+
+function getSlotById(slotId)
+    if not slotId then
+        return nil
+    end
+
+    for _, bar in ipairs(actionBars) do
+        local slot = bar.panel:getChildById(slotId)
+        if slot then
+            return slot
+        end
+    end
+    return nil
+end
+
+function getAllSlots()
+    local slots = {}
+    for _, bar in ipairs(actionBars) do
+        for _, slot in ipairs(bar.panel:getChildren()) do
+            table.insert(slots, slot)
+        end
+    end
+    return slots
+end
+
+-- Lets the player drag an extra bar anywhere on the screen using the grip on
+-- its left edge, so the slots themselves keep their own drag and drop.
+local function setupBarDragging(bar)
+    local grip = bar:getChildById('dragGrip')
+    grip:setVisible(true)
+    grip:setWidth(10)
+    grip:setDraggable(true)
+
+    grip.onDragEnter = function(widget, mousePos)
+        local pos = bar:getPosition()
+        widget.movingReference = {
+            x = mousePos.x - pos.x,
+            y = mousePos.y - pos.y
+        }
+        return true
+    end
+
+    grip.onDragMove = function(widget, mousePos, mouseMoved)
+        if not widget.movingReference then
+            return false
+        end
+        bar:setPosition({
+            x = mousePos.x - widget.movingReference.x,
+            y = mousePos.y - widget.movingReference.y
+        })
+        return true
+    end
+
+    grip.onDragLeave = function(widget)
+        widget.movingReference = nil
+        keepBarOnScreen(bar)
+        saveBarPositions()
+        return true
+    end
+end
+
+function keepBarOnScreen(bar)
+    local parent = bar:getParent()
+    if not parent then
+        return
+    end
+
+    local area = parent:getRect()
+    if area.width <= 0 or area.height <= 0 then
+        return
+    end
+
+    bar:setPosition({
+        x = math.max(area.x, math.min(bar:getX(), area.x + area.width - bar:getWidth())),
+        y = math.max(area.y, math.min(bar:getY(), area.y + area.height - bar:getHeight()))
+    })
+end
+
+local function defaultBarPosition(bar, index)
+    local parent = bar:getParent()
+    local area = parent:getRect()
+    return {
+        x = area.x + math.max(0, math.floor((area.width - bar:getWidth()) / 2)),
+        y = area.y + math.max(0, area.height - 60 - (index - 1) * (bar:getHeight() + 4))
+    }
+end
+
+function createExtraBars()
+    local rootPanel = modules.game_interface.getRootPanel()
+
+    for i = 2, ACTION_BAR_COUNT do
+        local bar = g_ui.createWidget('ActionBarWindow', rootPanel)
+        bar:setId('actionBar' .. i)
+        bar:setWidth(EXTRA_BAR_WIDTH)
+        bar:setVisible(false)
+        setupBarDragging(bar)
+
+        table.insert(actionBars, {
+            window = bar,
+            panel = bar:getChildById('actionBarPanel'),
+            index = i,
+            fixed = false
+        })
+    end
+end
+
+function areExtraBarsVisible()
+    return extraBarsVisible
+end
+
+function setExtraBarsVisible(visible)
+    if applyingExtraBars then
+        return
+    end
+
+    applyingExtraBars = true
+    visible = visible and true or false
+    extraBarsVisible = visible
+
+    for _, bar in ipairs(actionBars) do
+        if not bar.fixed then
+            bar.window:setVisible(visible)
+            if visible then
+                if bar.window:getX() == 0 and bar.window:getY() == 0 then
+                    bar.window:setPosition(defaultBarPosition(bar.window, bar.index))
+                end
+                keepBarOnScreen(bar.window)
+                bar.window:raise()
+            end
+        end
+    end
+
+    if modules.client_options then
+        modules.client_options.setOption('showExtraActionBars', visible)
+    end
+
+    applyingExtraBars = false
+end
+
+function toggleExtraBars()
+    setExtraBarsVisible(not extraBarsVisible)
+end
+
+function saveBarPositions()
+    local settings = g_settings.getNode('game_actionbar_bars') or {}
+    local char = g_game.getCharacterName()
+    if not char or #char == 0 then
+        return
+    end
+
+    settings[char] = {}
+    for _, bar in ipairs(actionBars) do
+        if not bar.fixed then
+            settings[char][bar.window:getId()] = {
+                position = pointtostring(bar.window:getPosition()),
+                width = bar.window:getWidth()
+            }
+        end
+    end
+
+    g_settings.setNode('game_actionbar_bars', settings)
+end
+
+function loadBarPositions()
+    local settings = g_settings.getNode('game_actionbar_bars')
+    local char = g_game.getCharacterName()
+    if not settings or not char or not settings[char] then
+        return
+    end
+
+    for _, bar in ipairs(actionBars) do
+        if not bar.fixed then
+            local barSettings = settings[char][bar.window:getId()]
+            if barSettings then
+                if barSettings.width then
+                    bar.window:setWidth(barSettings.width)
+                end
+                if barSettings.position then
+                    bar.window:setPosition(topoint(barSettings.position))
+                end
+                keepBarOnScreen(bar.window)
+            end
+        end
+    end
+end
+
 function copySlot(fromSlotId, toSlotId, visible)
-    local fromSlot = actionBarPanel:getChildById(fromSlotId)
-    local tmpslot = actionBarPanel:getChildById(toSlotId)
+    local fromSlot = getSlotById(fromSlotId)
+    local tmpslot = getSlotById(toSlotId)
     if not tmpslot then
         tmpslot = g_ui.createWidget('ActionSlot', actionBarPanel)
         tmpslot:setId(toSlotId)
+    end
+    if not fromSlot then
+        return
     end
     tmpslot:setVisible(visible)
     local tmptext = not fromSlot.text
@@ -151,10 +393,10 @@ function onDropFunc(slotId)
     if slotReassign then
         local fromSlotId = slotToEdit
         local toSlotId = slotId
-        local fromSlot = actionBarPanel:getChildById(fromSlotId)
-        local toSlot = actionBarPanel:getChildById(toSlotId)
+        local fromSlot = getSlotById(fromSlotId)
+        local toSlot = getSlotById(toSlotId)
         if fromSlot and toSlot then
-            local tmpslotid = 'slot' .. maxSlots + 1
+            local tmpslotid = SWAP_SLOT_ID
             copySlot(fromSlotId, tmpslotid, false)
             copySlot(toSlotId, fromSlotId, true)
             copySlot(tmpslotid, toSlotId, true)
@@ -178,31 +420,40 @@ function onDropFunc(slotId)
 end
 
 function setupActionBar()
-    local slotsToDisplay = math.floor((actionBarPanel:getWidth()) / 34)
-    for i = 1, maxSlots do
-        slot = g_ui.createWidget('ActionSlot', actionBarPanel)
-        slot:setId('slot' .. i)
-        slot:setVisible(true)
-        slot.itemId = nil
-        slot.subType = nil
-        slot.words = nil
-        slot.text = nil
-        slot.useType = nil
-        g_mouse.bindPress(slot, function()
-            slotToEdit = 'slot' .. i .. ''
-        end, MouseLeftButton)
-        g_mouse.bindPress(slot, function()
-            createMenu('slot' .. i)
-        end, MouseRightButton)
-        g_mouse.bindOnDrop(slot, function()
-            if slotToEdit == 'slot' .. i then
-                slotReassign = 'slot' .. i
+    for _, bar in ipairs(actionBars) do
+        for i = 1, maxSlots do
+            local slotId = slotIdAt(bar.index, i)
+            local slot = g_ui.createWidget('ActionSlot', bar.panel)
+            slot:setId(slotId)
+            slot:setVisible(true)
+            slot.itemId = nil
+            slot.subType = nil
+            slot.words = nil
+            slot.text = nil
+            slot.useType = nil
+            g_mouse.bindPress(slot, function()
+                slotToEdit = slotId
+            end, MouseLeftButton)
+            g_mouse.bindPress(slot, function()
+                createMenu(slotId)
+            end, MouseRightButton)
+            g_mouse.bindOnDrop(slot, function()
+                if slotToEdit == slotId then
+                    slotReassign = slotId
+                end
+                onDropFunc(slotId)
+            end)
+            if i == 1 then
+                slot:addAnchor(AnchorLeft, 'parent', AnchorLeft)
             end
-            onDropFunc('slot' .. i)
-        end)
-        if i == 1 then
-            slot:addAnchor(AnchorLeft, 'parent', AnchorLeft)
         end
+    end
+
+    loadBarPositions()
+
+    -- client_options may have been restored before this module was loaded
+    if modules.client_options then
+        setExtraBarsVisible(modules.client_options.getOption('showExtraActionBars'))
     end
 end
 
@@ -222,7 +473,7 @@ function createMenu(slotId)
     menu:addOption('Edit Hotkey', function()
         openEditHotkeyWindow()
     end)
-    local actionSlot = actionBarPanel:recursiveGetChildById(slotToEdit)
+    local actionSlot = getSlotById(slotToEdit)
     if actionSlot.itemId or actionSlot.words or actionSlot.text or actionSlot.useType or actionSlot.hotkey then
         menu:addOption('Clear Slot', function()
             clearSlot()
@@ -331,7 +582,7 @@ function spellAssignAccept()
     iconId = tonumber(Spells.getClientId(spellName))
     local spell = Spells.getSpellByName(spellName)
     local profile = Spells.getSpellProfileByName(spellName)
-    local slot = actionBarPanel:getChildById(slotToEdit)
+    local slot = getSlotById(slotToEdit)
     slot:setImageSource(Spells.getIconFileByProfile(profile))
     slot:setImageClip(Spells.getImageClip(iconId, profile))
     slot.words = spell.words
@@ -347,7 +598,7 @@ function spellAssignAccept()
 end
 
 function clearSlot()
-    local slot = actionBarPanel:getChildById(slotToEdit)
+    local slot = getSlotById(slotToEdit)
     slot:setImageSource('/images/game/actionbar/slot-actionbar')
     slot:setImageClip('0 0 0 0')
     slot:clearItem()
@@ -362,7 +613,7 @@ function clearSlot()
 end
 
 function clearSlotById(slotId)
-    local slot = actionBarPanel:getChildById(slotId)
+    local slot = getSlotById(slotId)
     slot:setImageSource('/images/game/actionbar/slot-actionbar')
     slot:setImageClip('0 0 0 0')
     slot:clearItem()
@@ -377,7 +628,7 @@ function clearSlotById(slotId)
 end
 
 function clearHotkey()
-    local slot = actionBarPanel:getChildById(slotToEdit)
+    local slot = getSlotById(slotToEdit)
     slot.hotkey = nil
     slot:getChildById('key'):setText('')
 end
@@ -411,7 +662,7 @@ function textAssignAccept()
 
     local spell, profile, spellName = Spells.getSpellByWords(name)
 
-    local slot = actionBarPanel:getChildById(slotToEdit)
+    local slot = getSlotById(slotToEdit)
     if spellName then
         iconId = tonumber(Spells.getClientId(spellName))
         clearSlot()
@@ -479,7 +730,7 @@ function objectAssignAccept()
     if not item then
         return
     end
-    local slot = actionBarPanel:getChildById(slotToEdit)
+    local slot = getSlotById(slotToEdit)
     slot:setItem(item)
     slot:setImageSource('/images/game/actionbar/item-background')
     slot:setBorderWidth(0)
@@ -616,7 +867,7 @@ function closeEditHotkeyWindow()
 end
 
 function unbindHotkeys()
-    for v, slot in pairs(actionBarPanel:getChildren()) do
+    for v, slot in pairs(getAllSlots()) do
         if slot.hotkey and slot.hotkey ~= '' then
             g_keyboard.unbindKeyPress(slot.hotkey)
         end
@@ -624,8 +875,12 @@ function unbindHotkeys()
 end
 
 function setupHotkeys()
+    if bulkLoading then
+        return
+    end
+
     unbindHotkeys()
-    for v, slot in pairs(actionBarPanel:getChildren()) do
+    for v, slot in pairs(getAllSlots()) do
         slot.onMouseRelease = function()
             if g_clock.millis() - lastHotkeyTime < modules.client_options.getOption('hotkeyDelay') then
                 return
@@ -714,7 +969,7 @@ function setupHotkeys()
 end
 
 function checkHotkey(hotkey)
-    for v, k in pairs(actionBarPanel:getChildren()) do
+    for v, k in pairs(getAllSlots()) do
         if k.hotkey == hotkey then
             return true
         end
@@ -751,9 +1006,9 @@ function hotkeyClear(assignWindow)
 end
 
 function hotkeyCaptureOk(assignWindow, keyCombo)
-    local slot = actionBarPanel:getChildById(slotToEdit)
+    local slot = getSlotById(slotToEdit)
     if checkHotkey(keyCombo) then
-        for v, k in pairs(actionBarPanel:getChildren()) do
+        for v, k in pairs(getAllSlots()) do
             if k.hotkey == keyCombo then
                 k.hotkey = ''
                 k:getChildById('key'):setText('')
@@ -787,21 +1042,25 @@ function saveActionBar()
     hotkeys = hotkeys[char]
 
     table.clear(hotkeys)
-    local currentHotkeys = actionBarPanel:getChildren()
+    local currentHotkeys = getAllSlots()
     for v, slot in ipairs(currentHotkeys) do
-        hotkeys[slot:getId()] = {
-            hotkey = slot.hotkey,
-            autoSend = slot.autoSend,
-            itemId = slot.itemId,
-            subType = slot.subType,
-            useType = slot.useType,
-            text = slot.text,
-            words = slot.words,
-            parameter = slot.parameter
-        }
+        -- the scratch slot only exists to swap two slots around
+        if slot:getId() ~= SWAP_SLOT_ID then
+            hotkeys[slot:getId()] = {
+                hotkey = slot.hotkey,
+                autoSend = slot.autoSend,
+                itemId = slot.itemId,
+                subType = slot.subType,
+                useType = slot.useType,
+                text = slot.text,
+                words = slot.words,
+                parameter = slot.parameter
+            }
+        end
     end
 
     g_settings.setNode('game_actionbar', hotkeySettings)
+    saveBarPositions()
     g_settings.save()
 end
 
@@ -838,6 +1097,7 @@ end
 
 function loadActionBar()
     unbindHotkeys()
+    bulkLoading = true
     local hotkeySettings = g_settings.getNode('game_actionbar')
     local hotkeys = {}
 
@@ -849,7 +1109,7 @@ function loadActionBar()
     end
     if hotkeys then
         for slot, setting in pairs(hotkeys) do
-            slot = actionBarPanel:getChildById(slot)
+            slot = getSlotById(slot)
             if slot then
                 slot.itemId = setting.itemId
                 slot:setItemId(setting.itemId)
@@ -880,6 +1140,8 @@ function loadActionBar()
             end
         end
     end
+
+    bulkLoading = false
     setupHotkeys()
 end
 
@@ -926,7 +1188,7 @@ end
 
 function onSpellCooldown(spellId, duration)
     local slot
-    for v, k in pairs(actionBarPanel:getChildren()) do
+    for v, k in pairs(getAllSlots()) do
         local spell, profile, spellName = Spells.getSpellByIcon(spellId)
         if not spell then
             print('[WARNING] Can not set cooldown on spell with id: ' .. spellId)
@@ -962,7 +1224,7 @@ end
 function onSpellGroupCooldown(groupId, duration)
     local slot
     local spellGroup = 0
-    for v, k in pairs(actionBarPanel:getChildren()) do
+    for v, k in pairs(getAllSlots()) do
         local spell, profile, spellName
         if k.words then
             spell, profile, spellName = Spells.getSpellByWords(k.words)

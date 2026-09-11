@@ -127,6 +127,11 @@ function UIMiniWindowContainer:onDrop(widget, mousePos)
         end
 
         self:fitAll(widget)
+        widget:updateLockButton()
+
+        if modules.game_interface then
+            modules.game_interface.onMiniWindowPinChanged(widget, true)
+        end
         return true
     end
 end

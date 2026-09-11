@@ -1,4 +1,29 @@
 Panel
+  Label
+    id: uiLayoutModeLabel
+    !text: tr('Interface layout:')
+    !tooltip: tr('Docked keeps the windows inside the side columns.\nFloating gives the map the whole screen and lets every window\nbe moved freely, opened and closed with its hotkey.')
+    phantom: false
+    anchors.left: parent.left
+    anchors.top: parent.top
+
+  ComboBox
+    id: uiLayoutMode
+    width: 190
+    anchors.left: prev.right
+    anchors.top: prev.top
+    margin-top: -4
+    margin-left: 5
+    mouse-scroll: false
+
+  Label
+    id: uiLayoutModeHint
+    !text: tr('Ctrl+Shift+L switches layout, Alt+H hides the floating windows.')
+    anchors.left: parent.left
+    anchors.top: prev.bottom
+    margin-top: 4
+    color: #a0a0a0
+
   OptionCheckBox
     id: showPing
     !text: tr('Show connection ping')
@@ -11,6 +36,11 @@ Panel
   OptionCheckBox
     id: showRightExtraPanel
     !text: tr('Show an extra right panel')
+
+  OptionCheckBox
+    id: showExtraActionBars
+    !text: tr('Show the extra action bars')
+    !tooltip: tr('The first action bar is always visible.\nThe extra ones can be toggled any time with Alt+B.')
 
   OptionCheckBox
     id: openMaximized

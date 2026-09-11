@@ -105,9 +105,12 @@ function init()
     spelllistWindow = g_ui.displayUI('spelllist', modules.game_interface.getRightPanel())
     spelllistWindow:hide()
 
-    spelllistButton = modules.client_topmenu.addRightGameToggleButton('spelllistButton', tr('Spell List'),
+    spelllistButton = modules.client_topmenu.addRightGameToggleButton('spelllistButton',
+                                                                      tr('Spell List') .. ' (Alt+G)',
                                                                       '/images/topbuttons/spelllist', toggle)
     spelllistButton:setOn(false)
+
+    g_keyboard.bindKeyDown('Alt+G', toggle)
 
     nameValueLabel = spelllistWindow:getChildById('labelNameValue')
     formulaValueLabel = spelllistWindow:getChildById('labelFormulaValue')
@@ -192,6 +195,8 @@ function terminate()
             updateSpellInformation(focusedChild)
         end
     })
+
+    g_keyboard.unbindKeyDown('Alt+G')
 
     spelllistWindow:destroy()
     spelllistButton:destroy()
