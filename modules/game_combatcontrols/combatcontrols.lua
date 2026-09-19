@@ -16,9 +16,11 @@ pvpModeRadioGroup = nil
 
 function init()
     combatControlsButton = modules.client_topmenu.addRightGameToggleButton('combatControlsButton',
-                                                                           tr('Combat Controls'),
+                                                                           tr('Combat Controls') .. ' (Alt+C)',
                                                                            '/images/topbuttons/combatcontrols', toggle)
     combatControlsButton:setOn(true)
+
+    g_keyboard.bindKeyDown('Alt+C', toggle)
     combatControlsWindow = g_ui.loadUI('combatcontrols')
     combatControlsWindow:disableResize()
 
@@ -88,6 +90,8 @@ function terminate()
     if g_game.isOnline() then
         offline()
     end
+
+    g_keyboard.unbindKeyDown('Alt+C')
 
     fightModeRadioGroup:destroy()
     pvpModeRadioGroup:destroy()

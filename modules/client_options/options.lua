@@ -17,6 +17,8 @@ local defaultOptions = {
     showPrivateMessagesOnScreen = true,
     showLeftPanel = false,
     showRightExtraPanel = false,
+    uiLayoutMode = 0,
+    showExtraActionBars = false,
     openMaximized = false,
     backgroundFrameRate = 201,
     enableAudio = true,
@@ -62,6 +64,7 @@ local audioButton
 local crosshairCombobox
 local antialiasingModeCombobox
 local floorViewModeCombobox
+local uiLayoutModeCombobox
 
 function init()
     for k, v in pairs(defaultOptions) do
@@ -116,6 +119,15 @@ function terminate()
 end
 
 function setupComboBox()
+    uiLayoutModeCombobox = generalPanel:recursiveGetChildById('uiLayoutMode')
+
+    uiLayoutModeCombobox:addOption('Docked panels (Tibia)', 0)
+    uiLayoutModeCombobox:addOption('Floating windows (Ragnarok)', 1)
+
+    uiLayoutModeCombobox.onOptionChange = function(comboBox, option)
+        setOption('uiLayoutMode', comboBox:getCurrentOption().data)
+    end
+
     crosshairCombobox = generalPanel:recursiveGetChildById('crosshair')
 
     crosshairCombobox:addOption('Disabled', 'disabled')
@@ -256,6 +268,16 @@ function setOption(key, value, force)
         modules.game_interface.getLeftPanel():setOn(value)
     elseif key == 'showRightExtraPanel' then
         modules.game_interface.getRightExtraPanel():setOn(value)
+    elseif key == 'uiLayoutMode' then
+        value = tonumber(value) or 0
+        uiLayoutModeCombobox:setCurrentOptionByData(value, true)
+        -- 'force' is only set while the options are being restored at startup,
+        -- when the windows must stay exactly where they were saved
+        modules.game_interface.setLayoutMode(value, not force)
+    elseif key == 'showExtraActionBars' then
+        if modules.game_actionbar then
+            modules.game_actionbar.setExtraBarsVisible(value)
+        end
     elseif key == 'backgroundFrameRate' then
         local text, v = value, value
         if value <= 0 or value >= 201 then

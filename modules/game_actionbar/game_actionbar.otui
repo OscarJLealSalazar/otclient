@@ -36,49 +36,57 @@ ActionSlot < UIActionSlot
     margin-top: 6
     font: verdana-10px
 
-UIWindow
+ActionBarWindow < UIWindow
   visible: true
   height: 42
-  anchors.top: parent.top
-  anchors.left: parent.left
-  anchors.right: parent.right
   image-source: /images/ui/panel_side
   image-border: 4
   padding: 3
   text-align: center
-  //background-color: gray
   auto-focus: first
   draggable: false
   phantom: false
   focusable: false
+
+  // only shown on the extra (floating) bars, used to drag them around
+  UIWidget
+    id: dragGrip
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    width: 0
+    visible: false
+    focusable: false
+    image-source: /images/ui/panel_flat
+    image-border: 2
+    !tooltip: tr('Drag to move this action bar')
+
   Button
     id: prevButton
     image-source: /images/game/actionbar/1pixel-up-frame-background
     icon: /images/game/actionbar/icon-arrow
-    anchors.left: parent.left
+    anchors.left: dragGrip.right
     anchors.top: parent.top
     size: 17 17
     margin-left: 2
     @onClick: |
-      modules.game_actionbar.actionBar:getChildById('horizontalScroll'):decrement(36)
+      self:getParent():getChildById('horizontalScroll'):decrement(36)
   Button
     id: prevSkipButton
     image-source: /images/game/actionbar/1pixel-up-frame-background
     icon: /images/game/actionbar/icon-arrowskip
-    anchors.left: parent.left
+    anchors.left: dragGrip.right
     anchors.top: prevButton.bottom
     size: 17 17
     margin-left: 2
     margin-top: 2
     @onClick: |
-      modules.game_actionbar.actionBar:getChildById('horizontalScroll'):decrement(999)
+      self:getParent():getChildById('horizontalScroll'):decrement(999)
   ScrollablePanel
     id: actionBarPanel
     anchors.top: parent.top
     anchors.left: prevButton.right
     anchors.right: nextButton.left
-    //anchors.left: parent.left
-    //anchors.right: parent.right
     anchors.bottom: parent.bottom
     horizontal-scrollbar: horizontalScroll
     inverted-scroll: false
@@ -103,7 +111,7 @@ UIWindow
     size: 17 17
     margin-right: 2
     @onClick: |
-      modules.game_actionbar.actionBar:getChildById('horizontalScroll'):increment(36)
+      self:getParent():getChildById('horizontalScroll'):increment(36)
   Button
     id: nextSkipButton
     image-source: /images/game/actionbar/1pixel-up-frame-background
@@ -114,4 +122,11 @@ UIWindow
     margin-right: 2
     margin-top: 2
     @onClick: |
-      modules.game_actionbar.actionBar:getChildById('horizontalScroll'):increment(999)
+      self:getParent():getChildById('horizontalScroll'):increment(999)
+
+// the fixed bar, always docked at the bottom panel
+ActionBarWindow
+  id: actionBar
+  anchors.top: parent.top
+  anchors.left: parent.left
+  anchors.right: parent.right

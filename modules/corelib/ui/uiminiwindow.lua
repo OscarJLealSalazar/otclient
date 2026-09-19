@@ -87,6 +87,13 @@ function UIMiniWindow:setup()
         end
     end
 
+    local lockButton = self:getChildById('lockButton')
+    if lockButton then
+        lockButton.onClick = function()
+            self:togglePin()
+        end
+    end
+
     self:getChildById('miniwindowTopBar').onDoubleClick = function()
         if self:isOn() then
             self:maximize()
@@ -94,6 +101,151 @@ function UIMiniWindow:setup()
             self:minimize()
         end
     end
+
+    self:updateLockButton()
+end
+
+-- A mini window is considered "pinned" while it lives inside a side panel
+-- (UIMiniWindowContainer). Unpinned windows float freely above the map.
+function UIMiniWindow:isPinned()
+    local parent = self:getParent()
+    return parent ~= nil and parent:getClassName() == 'UIMiniWindowContainer'
+end
+
+function UIMiniWindow:updateLockButton()
+    local lockButton = self:getChildById('lockButton')
+    if lockButton then
+        lockButton:setOn(self:isPinned())
+    end
+end
+
+-- Keeps a floating window fully inside its parent, so it can never be dragged
+-- (or restored) out of reach.
+function UIMiniWindow:ensureOnScreen()
+    local parent = self:getParent()
+    if not parent or parent:getClassName() == 'UIMiniWindowContainer' then
+        return
+    end
+
+    local area = parent:getRect()
+    if area.width <= 0 or area.height <= 0 then
+        return
+    end
+
+    local x = math.max(area.x, math.min(self:getX(), area.x + area.width - self:getWidth()))
+    local y = math.max(area.y, math.min(self:getY(), area.y + area.height - self:getHeight()))
+    self:setPosition({
+        x = x,
+        y = y
+    })
+end
+
+-- Resolves the column this window was pinned to the last time, so unpinning
+-- and pinning it again puts it back where the player had it.
+function UIMiniWindow:getLastDockPanel()
+    local parentId = self:getSettings('dockParentId')
+    if not parentId then
+        return nil
+    end
+
+    local panel = rootWidget:recursiveGetChildById(parentId)
+    if panel and panel:getClassName() == 'UIMiniWindowContainer' then
+        return panel
+    end
+    return nil
+end
+
+-- Docks the window into a side panel, Tibia style. Without an explicit
+-- container it goes back to the column it came from, falling back to the
+-- panel currently selected in the game interface.
+function UIMiniWindow:pin(container)
+    if self:isPinned() then
+        return false
+    end
+
+    container = container or self:getLastDockPanel()
+
+    if not container and modules.game_interface then
+        container = modules.game_interface.getDockPanel()
+    end
+
+    if not container or container:getClassName() ~= 'UIMiniWindowContainer' then
+        return false
+    end
+
+    local oldParent = self:getParent()
+    if oldParent then
+        -- remember where it was floating before it gets docked
+        self:saveParentPosition(oldParent:getId(), self:getPosition())
+        oldParent:removeChild(self)
+    end
+
+    self.free = false
+
+    local index = self:getSettings('index')
+    if index and index > 0 and index - 1 <= container:getChildCount() then
+        container:insertChild(index, self)
+    else
+        container:addChild(self)
+    end
+
+    container:fitAll(self)
+    container:saveChildren()
+
+    self:updateLockButton()
+    signalcall(self.onPinChange, self, true)
+
+    if modules.game_interface then
+        modules.game_interface.onMiniWindowPinChanged(self, true)
+    end
+    return true
+end
+
+-- Detaches the window from its side panel so it floats above the map,
+-- Ragnarok style, restoring the position it last floated at.
+function UIMiniWindow:unpin()
+    local parent = self:getParent()
+    if not parent or parent:getClassName() ~= 'UIMiniWindowContainer' then
+        return false
+    end
+
+    local containerParent = parent:getParent()
+    if not containerParent then
+        return false
+    end
+
+    -- remember the column so pinning it again restores the same spot
+    self:setSettings({
+        dockParentId = parent:getId()
+    })
+
+    local floatPosition = self:getSettings('position')
+    local oldPos = self:getPosition()
+
+    parent:removeChild(self)
+    containerParent:addChild(self)
+    parent:saveChildren()
+
+    self.free = true
+    self:setPosition(floatPosition and topoint(floatPosition) or oldPos)
+    self:ensureOnScreen()
+    self:saveParent(containerParent)
+    self:raise()
+
+    self:updateLockButton()
+    signalcall(self.onPinChange, self, false)
+
+    if modules.game_interface then
+        modules.game_interface.onMiniWindowPinChanged(self, false)
+    end
+    return true
+end
+
+function UIMiniWindow:togglePin()
+    if self:isPinned() then
+        return self:unpin()
+    end
+    return self:pin()
 end
 
 function UIMiniWindow:setupOnStart()
@@ -181,6 +333,7 @@ function UIMiniWindow:setupOnStart()
     end
 
     self:fitOnParent()
+    self:updateLockButton()
 end
 
 function UIMiniWindow:onVisibilityChange(visible)
@@ -207,6 +360,7 @@ function UIMiniWindow:onDragEnter(mousePos)
     }
     self:setPosition(oldPos)
     self.free = true
+    self:updateLockButton()
     return true
 end
 
@@ -220,6 +374,12 @@ function UIMiniWindow:onDragLeave(droppedWidget, mousePos)
     end
 
     self:saveParent(self:getParent())
+    self:ensureOnScreen()
+    self:updateLockButton()
+
+    if modules.game_interface then
+        modules.game_interface.onMiniWindowPinChanged(self, self:isPinned())
+    end
 end
 
 function UIMiniWindow:onDragMove(mousePos, mouseMoved)
@@ -423,6 +583,7 @@ function UIMiniWindow:setParent(parent, dontsave)
         self:saveParent(parent)
     end
     self:fitOnParent()
+    self:updateLockButton()
 end
 
 function UIMiniWindow:setHeight(height)

@@ -43,6 +43,37 @@ MiniWindow < UIMiniWindow
       image-clip: 28 28 14 14
 
   UIButton
+    id: lockButton
+    anchors.top: closeButton.top
+    anchors.right: minimizeButton.left
+    margin-right: 3
+    size: 14 14
+    image-source: /images/ui/miniwindow_buttons
+    image-clip: 70 0 14 14
+    image-color: #ffffff55
+    !tooltip: tr('Pin this window to a side panel')
+
+    $hover:
+      image-clip: 70 14 14 14
+      image-color: #ffffffff
+
+    $pressed:
+      image-clip: 70 28 14 14
+      image-color: #ffffffff
+
+    $on:
+      image-color: #7fd67fff
+      !tooltip: tr('Unpin this window so it floats over the map')
+
+    $on hover:
+      image-clip: 70 14 14 14
+      image-color: #aaffaaff
+
+    $on pressed:
+      image-clip: 70 28 14 14
+      image-color: #aaffaaff
+
+  UIButton
     id: minimizeButton
     anchors.top: closeButton.top
     anchors.right: closeButton.left

@@ -72,6 +72,9 @@ UIWidget
     anchors.bottom: parent.bottom
     focusable: false
     on: true
+    $!on:
+      width: 0
+      visible: false
 
   GameSidePanel
     id: gameRightExtraPanel

@@ -1,5 +1,13 @@
 WALK_STEPS_RETRY = 10
 
+-- UI layout modes.
+-- Classic  : Tibia style, the windows live docked inside the side columns.
+-- Floating : Ragnarok style, the map takes the whole screen and the windows
+--            float on top of it, opened and closed with hotkeys.
+UILayoutClassic = 0
+UILayoutFloating = 1
+UILayoutModeCount = 2
+
 gameRootPanel = nil
 gameMapPanel = nil
 gameRightPanel = nil
@@ -18,6 +26,11 @@ exitWindow = nil
 bottomSplitter = nil
 limitedZoom = false
 currentViewMode = 0
+currentLayoutMode = UILayoutClassic
+classicViewMode = 0
+floatingWindowsHidden = false
+hiddenFloatingWindows = {}
+applyingLayoutMode = false
 smartWalkDirs = {}
 smartWalkDir = nil
 firstStep = false
@@ -165,6 +178,9 @@ function bindKeys()
         modules.game_textmessage.clearMessages()
     end, gameRootPanel)
 
+    g_keyboard.bindKeyDown('Ctrl+Shift+L', toggleLayoutMode, gameRootPanel)
+    g_keyboard.bindKeyDown('Alt+H', toggleFloatingWindows, gameRootPanel)
+
     if not g_app.isScaled() then
         g_keyboard.bindKeyDown('Ctrl+.', nextViewMode, gameRootPanel)
     end
@@ -280,6 +296,12 @@ function show()
         setupViewMode(2)
     end
 
+    -- the mini windows restore themselves on their own onGameStart handler,
+    -- so wait for all of them before deciding which columns are still needed
+    addEvent(function()
+        applyLayoutMode()
+    end)
+
     addEvent(function()
         if not limitedZoom or g_game.isGM() then
             gameMapPanel:setMaxZoomOut(513)
@@ -318,6 +340,8 @@ end
 function save()
     local settings = {}
     settings.splitterMarginBottom = bottomSplitter:getMarginBottom()
+    settings.layoutMode = currentLayoutMode
+    settings.classicViewMode = classicViewMode
     g_settings.setNode('game_interface', settings)
 end
 
@@ -327,6 +351,16 @@ function load()
         if settings.splitterMarginBottom then
             bottomSplitter:setMarginBottom(settings.splitterMarginBottom)
         end
+        if settings.classicViewMode then
+            classicViewMode = tonumber(settings.classicViewMode) or 0
+        end
+        if settings.layoutMode then
+            currentLayoutMode = tonumber(settings.layoutMode) or UILayoutClassic
+        end
+    end
+
+    if g_game.isOnline() then
+        applyLayoutMode()
     end
 end
 
@@ -506,6 +540,24 @@ function updateStretchShrink()
 
         -- Set gameMapPanel size to height = 11 * 32 + 2
         bottomSplitter:setMarginBottom(bottomSplitter:getMarginBottom() + (gameMapPanel:getHeight() - 32 * 11) - 10)
+    end
+
+    keepFloatingWidgetsOnScreen()
+end
+
+-- A smaller client window must never leave a floating window or action bar
+-- stranded outside of the visible area.
+function keepFloatingWidgetsOnScreen()
+    for _, window in pairs(getFloatingWindows()) do
+        window:ensureOnScreen()
+    end
+
+    if modules.game_actionbar then
+        for _, bar in pairs(modules.game_actionbar.getBars()) do
+            if not bar.fixed and bar.window:isVisible() then
+                modules.game_actionbar.keepBarOnScreen(bar.window)
+            end
+        end
     end
 end
 
@@ -1127,7 +1179,226 @@ function getShowTopMenuButton()
     return showTopMenuButton
 end
 
+-- Returns the side panel a window should be docked into when the user pins it
+-- without saying where. Makes sure the column is expanded first, otherwise the
+-- window would be dropped into a collapsed (zero width) panel.
+function getDockPanel()
+    local panel = gameSelectedPanel
+    if not panel or not panel:isOn() then
+        panel = gameRightPanel
+    end
+
+    if not panel:isOn() then
+        panel:setOn(true)
+    end
+    panel:setVisible(true)
+
+    return panel
+end
+
+function getSidePanels()
+    return { gameLeftPanel, gameRightPanel, gameRightExtraPanel }
+end
+
+-- Every mini window currently floating on top of the map.
+function getFloatingWindows()
+    local windows = {}
+    if not gameRootPanel then
+        return windows
+    end
+
+    for _, child in pairs(gameRootPanel:getChildren()) do
+        if child.UIMiniWindowContainer and child:getClassName() == 'UIMiniWindow' then
+            table.insert(windows, child)
+        end
+    end
+    return windows
+end
+
+function getPinnedWindows()
+    local windows = {}
+    for _, panel in pairs(getSidePanels()) do
+        for _, child in pairs(panel:getChildren()) do
+            if child.UIMiniWindowContainer then
+                table.insert(windows, child)
+            end
+        end
+    end
+    return windows
+end
+
+function isFloatingLayout()
+    return currentLayoutMode == UILayoutFloating
+end
+
+function getLayoutMode()
+    return currentLayoutMode
+end
+
+-- Expands the columns that still hold windows and collapses the empty ones.
+-- In the classic layout the columns follow the client options as before.
+function updateSidePanels()
+    if not isFloatingLayout() then
+        gameRightPanel:setOn(true)
+        if modules.client_options then
+            gameLeftPanel:setOn(modules.client_options.getOption('showLeftPanel'))
+            gameRightExtraPanel:setOn(modules.client_options.getOption('showRightExtraPanel'))
+        end
+        return
+    end
+
+    -- floating layout: a column only takes screen space while it holds a
+    -- window the player pinned there
+    for _, panel in pairs(getSidePanels()) do
+        local keep = panel:getChildCount() > 0
+        if panel:isOn() ~= keep then
+            panel:setOn(keep)
+        end
+        if keep then
+            panel:setVisible(true)
+        end
+    end
+end
+
+-- Applies the current layout without moving any window around, so it is safe
+-- to call on every login and whenever a window gets pinned or unpinned.
+function applyLayoutMode()
+    if isFloatingLayout() then
+        setupViewMode(2)
+    else
+        setupViewMode(classicViewMode)
+    end
+
+    updateSidePanels()
+end
+
+function unpinAllWindows()
+    for _, window in pairs(getPinnedWindows()) do
+        window:unpin()
+    end
+end
+
+function pinAllWindows()
+    for _, window in pairs(getFloatingWindows()) do
+        window:pin()
+    end
+end
+
+-- rearrangeWindows moves every window to the arrangement the new layout
+-- implies (all floating, or all docked). It is only meant for an explicit
+-- switch by the player: restoring the layout on login must leave the windows
+-- exactly where they were saved.
+function setLayoutMode(mode, rearrangeWindows)
+    if applyingLayoutMode then
+        return
+    end
+
+    mode = tonumber(mode) or UILayoutClassic
+    if mode ~= UILayoutFloating then
+        mode = UILayoutClassic
+    end
+
+    applyingLayoutMode = true
+
+    currentLayoutMode = mode
+
+    if rearrangeWindows then
+        showFloatingWindows()
+        applyLayoutMode()
+        if isFloatingLayout() then
+            unpinAllWindows()
+        else
+            pinAllWindows()
+        end
+    end
+
+    applyLayoutMode()
+
+    if modules.client_options then
+        modules.client_options.setOption('uiLayoutMode', currentLayoutMode)
+    end
+    save()
+
+    applyingLayoutMode = false
+end
+
+function toggleLayoutMode()
+    setLayoutMode((currentLayoutMode + 1) % UILayoutModeCount, true)
+end
+
+-- Called back by UIMiniWindow whenever the player pins or unpins a window, so
+-- the columns can grow and collapse along with them.
+function onMiniWindowPinChanged(window, pinned)
+    if not gameRootPanel then
+        return
+    end
+
+    if not pinned then
+        -- a window that was just released should never stay in the hidden set
+        for i = #hiddenFloatingWindows, 1, -1 do
+            if hiddenFloatingWindows[i] == window then
+                table.remove(hiddenFloatingWindows, i)
+            end
+        end
+    end
+
+    updateSidePanels()
+end
+
+function areFloatingWindowsHidden()
+    return floatingWindowsHidden
+end
+
+-- Hides every floating window at once without touching the open/closed state
+-- the player saved, so a single hotkey clears the screen and brings it back.
+function hideFloatingWindows()
+    if floatingWindowsHidden then
+        return
+    end
+
+    hiddenFloatingWindows = {}
+    for _, window in pairs(getFloatingWindows()) do
+        if window:isExplicitlyVisible() then
+            window:setVisible(false)
+            table.insert(hiddenFloatingWindows, window)
+        end
+    end
+
+    floatingWindowsHidden = true
+end
+
+function showFloatingWindows()
+    if not floatingWindowsHidden then
+        return
+    end
+
+    for _, window in pairs(hiddenFloatingWindows) do
+        if window and not window:isDestroyed() then
+            window:setVisible(true)
+            window:ensureOnScreen()
+        end
+    end
+
+    hiddenFloatingWindows = {}
+    floatingWindowsHidden = false
+end
+
+function toggleFloatingWindows()
+    if floatingWindowsHidden then
+        showFloatingWindows()
+    else
+        hideFloatingWindows()
+    end
+end
+
 function findContentPanelAvailable(child, minContentHeight)
+    -- in the floating layout the columns are collapsed while they hold nothing,
+    -- so a window that opens on its own (a container, for instance) needs one
+    -- expanded first, otherwise it would land in a zero width panel
+    if isFloatingLayout() then
+        return getDockPanel()
+    end
+
     if gameSelectedPanel:isVisible() and gameSelectedPanel:fits(child, minContentHeight, 0) >= 0 then
         return gameSelectedPanel
     end
@@ -1180,6 +1451,12 @@ function onExtraPanelVisibilityChange(extraPanel, visible)
 end
 
 function nextViewMode()
+    -- the floating layout already gives the map the whole screen, cycling the
+    -- view modes there would only fight with it
+    if isFloatingLayout() then
+        return
+    end
+
     setupViewMode((currentViewMode + 1) % 3)
 end
 
@@ -1250,6 +1527,12 @@ function setupViewMode(mode)
     end
 
     currentViewMode = mode
+
+    if mode ~= 2 then
+        classicViewMode = mode
+    end
+
+    updateSidePanels()
 end
 
 function limitZoom()
