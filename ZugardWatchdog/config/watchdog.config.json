@@ -1,0 +1,90 @@
+{
+  "projectRoot": "E:\\WorldOfZugard",
+  "watchdogRoot": "E:\\ZugardWatchdog",
+  "runtime": {
+    "mutexName": "Global\\ZugardWatchdog",
+    "maxSeconds": 240,
+    "gitTimeoutSeconds": 60
+  },
+  "jarvis": {
+    "enabled": true,
+    "heartbeatFile": "E:\\ZugardWatchdog\\state\\jarvis_heartbeat.json",
+    "staleMinutes": 30,
+    "noProgressMinutes": 90,
+    "handoffStaleMinutes": 60,
+    "processNames": []
+  },
+  "agents": {
+    "claude": {
+      "enabled": true,
+      "expectedRunning": false,
+      "processNames": ["claude"],
+      "activityPaths": [],
+      "logFiles": []
+    },
+    "codex": {
+      "enabled": true,
+      "expectedRunning": false,
+      "processNames": ["codex"],
+      "activityPaths": [],
+      "logFiles": [],
+      "configHome": ""
+    }
+  },
+  "unreal": {
+    "enabled": true,
+    "editorProcessNames": ["UnrealEditor", "UnrealEditor-Cmd"],
+    "buildProcessNames": ["UnrealBuildTool", "MSBuild", "ShaderCompileWorker"],
+    "buildMaxMinutes": 90,
+    "logDir": "E:\\WorldOfZugard\\Saved\\Logs",
+    "extraLogFiles": ["%LOCALAPPDATA%\\UnrealBuildTool\\Log.txt"],
+    "automationDir": "E:\\WorldOfZugard\\Saved\\Automation",
+    "notRespondingRuns": 2
+  },
+  "git": {
+    "enabled": true,
+    "allowFetch": false,
+    "uncommittedWarnMinutes": 120,
+    "untrackedMode": "normal"
+  },
+  "backup": {
+    "paths": [],
+    "maxAgeHours": 26
+  },
+  "claims": {
+    "dir": "E:\\ZugardWatchdog\\state\\claims",
+    "expireMinutes": 240
+  },
+  "resources": {
+    "minFreeDiskGB": 20,
+    "minFreeRamMB": 1024,
+    "maxCpuPercent": 95
+  },
+  "notify": {
+    "mode": "discord",
+    "discordWebhookEnvVar": "ZUGARD_DISCORD_WEBHOOK",
+    "cooldownMinutes": { "critical": 60, "warning": 240 },
+    "outboxMaxAttempts": 5,
+    "dailySummaryHour": 21
+  },
+  "recovery": {
+    "maxAttemptsPerDay": 3,
+    "minIntervalMinutes": 10
+  },
+  "patterns": {
+    "agent": [
+      { "name": "trust",    "tier": 3, "severity": "critical", "regex": "(?i)verify project trust|not trusted|untrusted (folder|project|workspace)|trust (this|the) (folder|project|directory)" },
+      { "name": "auth",     "tier": 3, "severity": "critical", "regex": "(?i)\\b401\\b|unauthori[sz]ed|authentication (failed|required)|not logged in|login required|token (expired|invalid)|invalid api key|403 forbidden" },
+      { "name": "approval", "tier": 3, "severity": "warning",  "regex": "(?i)(waiting|awaiting|requires?|needs?) (for )?(user |human )?(approval|authori[sz]ation|permission|confirmation)" },
+      { "name": "connection","tier": 2, "severity": "warning", "regex": "(?i)ECONNRESET|ETIMEDOUT|ENOTFOUND|connection (refused|reset|lost|error)|network error|stream disconnected|rate limit|\\b429\\b" },
+      { "name": "crash",    "tier": 2, "severity": "warning",  "regex": "(?i)unhandled (exception|rejection)|\\bpanic\\b|segmentation fault|fatal error" }
+    ],
+    "unreal": [
+      { "name": "build-failed", "tier": 2, "severity": "critical", "regex": "(?i)Result: Failed|BUILD FAILED|error C\\d{4}|error LNK\\d{4}|Compilation failed|Failed to compile" },
+      { "name": "fatal",        "tier": 2, "severity": "critical", "regex": "(?i)Fatal error:|Assertion failed:|Unhandled Exception|CrashReportClient" },
+      { "name": "test-failed",  "tier": 2, "severity": "warning",  "regex": "(?i)Test Completed\\. Result=\\{Fail|Automation Test Failed" },
+      { "name": "error-burst",  "tier": 2, "severity": "warning",  "regex": ": Error: ", "minCount": 20 }
+    ],
+    "stickyMinutes": 60
+  }
+}
